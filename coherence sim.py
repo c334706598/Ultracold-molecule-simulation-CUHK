@@ -84,12 +84,14 @@ class dd_coherence(object):
     def get_interaction(self):
         ### interaction in phase accumulation per ms
         axial = np.where(self.distances == 0, 0, 0.316 * self.d**2 / (self.distances**3 + 2**-100))
-        ### 0.316 coms from Debye^2/(um)^3/(4pi epsilon0 * hb)/3
+        # axial part
+        # 0.316 coms from Debye^2/(um)^3/(4pi epsilon0 * hb)/3
         zi = np.reshape(np.repeat(self.position_zs, self.N), 
                                 (self.N, self.N))
         zj = np.transpose(np.reshape(np.repeat(self.position_zs, self.N), 
                                 (self.N, self.N)))
         angular = np.where(self.distances == 0, 0, 1-3*((zi-zj)/(self.distances + 2**-100))**2)
+        # angular part
         return axial * angular
     
     def get_phase_rate(self):
@@ -109,6 +111,95 @@ class dd_coherence(object):
         coherence_x = np.mean(np.cos(self.phase))
         coherence_y = np.mean(np.sin(self.phase))
         return np.sqrt(coherence_x**2 + coherence_y**2)
+    
+    def find_neighbors(self, index=0, nn=6):
+        ### find the indices of n neighbor that has the largest interaction
+        return np.abs(self.interaction[index]).argsort()[-nn:][::-1]  
+    
+    def _Hamiltonian(self, spin_indices):
+        l = len(spin_indices)
+        h = np.zeros((2**l, 2**l), dtype=np.float32)
+        for row in range(2**l):
+            for column in range(2**l):
+                if self.flip_condition(row, column, l):
+                    # find the spin-exchange interaction
+                    spin1_index, spin2_index = self.find_flip_pair(row, column)
+                    spin1_index = spin_indices[spin1_index]
+                    spin2_index = spin_indices[spin2_index]
+                    h[row, column] = self.interaction[spin1_index, spin2_index]
+                else:
+                    pass
+        return h
+    
+    def flip_condition(self, index1, index2, total_spin):
+        ### spin is encoded in the binary form of indices, with 1 being spin up and 0 being spin down
+        if index1 * index2 == 0 or index1 >= 2**total_spin - 1 or index2 >= 2**total_spin - 1:
+        # if all spin up or all spin down, can not flip, or invalid index
+            return False
+        else:
+            temp = index1^index2
+            # get the different spins
+            count = 0
+            while temp != 0:
+                count += temp % 2
+                temp //= 2
+            if count == 2:
+                # if there are two spin states are different, can flip from one to another
+                return True
+            else:
+                return False
+    
+    def find_flip_pair(self, index1, index2):
+        temp = index1^index2
+        res = []
+        count = 0
+        while temp != 0:
+            if temp % 2 == 1:
+                res.append(count)
+            temp //= 2
+            count += 1
+        return res
+                
+    def _spin_evol(self, initial, hamiltonian, tmax):
+        ### d psi = h * psi * (-i) * dt
+        psi = initial
+        t = 0
+        while t <= tmax - self.dt:
+            psi += np.matmul(hamiltonian, psi)*self.dt*(-1j)
+            t += self.dt
+        return psi
+    
+    def _Sx(self, total_spin):
+        ### get the sx operator for the single spin
+        sx = np.zeros((2**total_spin, 2**total_spin), dtype=np.complex128)
+        for row in range(2**total_spin):
+            column = (row % 2)*(-2) + row + 1
+            sx[row, column] = 1
+        return sx
+
+        
+    def _Sy(self, total_spin):
+        ### get the sy operator for the single spin
+        sy = np.zeros((2**total_spin, 2**total_spin), dtype=np.complex128)
+        for row in range(2**total_spin):
+            column = (row % 2)*(-2) + row + 1
+            if row % 2 == 0:
+                sy[row, column] = -1j
+            else:
+                sy[row, column] = 1j
+        return sy
+                
+    
+    def _Sz(self, total_spin):
+        ### get the sz operator for the single spin
+        sz = np.zeros((2**total_spin, 2**total_spin), dtype=np.complex128)
+        for row in range(2**total_spin):
+            column = row
+            if row % 2 == 0:
+                sz[row, column] = 1
+            else:
+                sz[row, column] = -1
+        return sz
         
         
 if __name__ == '__main__':
@@ -126,19 +217,55 @@ if __name__ == '__main__':
 #    print(dd.interaction)
 #    print(dd.get_phase_rate())
 #    print(dd.get_coherence())
-    dd = dd_coherence(N=5000, T=0.7, 
+    dd = dd_coherence(N=1000, T=0.7, 
                       fx=200, fy=190, fz=30, 
                       mass=127, dipole=0.57, 
                       lattice=True, lattice_const=1, lattice_filling = 0.1,
                       dt=0.1)
-    t = []
-    coh = []
-    for i in range(50):
-        dd.run(duration=1)
-        t.append(i)
-        coh.append(dd.get_coherence()) 
-    plt.plot(t,coh)
+#    t = []
+#    coh = []
+#    for i in range(50):
+#        dd.run(duration=1)
+#        t.append(i)
+#        coh.append(dd.get_coherence()) 
+#    plt.plot(t,coh)
 #        
-        
-        
-        
+#        
+
+    neigh = dd.find_neighbors(0,2)
+    neigh = np.insert(neigh,0,0)
+#    print(dd.find_neighbors(0,1))
+    print(neigh)
+    hamiltonian = dd._Hamiltonian(neigh)
+    print(hamiltonian)
+    initial = np.ones(8, dtype=np.complex128)
+    print(initial)
+    sx_i = np.matmul(np.conjugate(initial),np.matmul(dd._Sx(3), initial))
+    sy_i = np.matmul(np.conjugate(initial),np.matmul(dd._Sy(3), initial))
+    sz_i = np.matmul(np.conjugate(initial),np.matmul(dd._Sz(3), initial))
+    print(sx_i)
+    print(sy_i)
+    print(sz_i)
+    final = dd._spin_evol(initial, hamiltonian, 10)
+    print(final)
+    sx_f = np.matmul(np.conjugate(final),np.matmul(dd._Sx(3), final))
+    sy_f = np.matmul(np.conjugate(final),np.matmul(dd._Sy(3), final))
+    sz_f = np.matmul(np.conjugate(final),np.matmul(dd._Sz(3), final))
+    print(sx_f)
+    print(sy_f)
+    print(sz_f)
+    x = []
+    y = []
+    for i in range(20):
+        final = dd._spin_evol(initial, hamiltonian, i)
+        sx_f = np.matmul(np.conjugate(final),np.matmul(dd._Sx(3), final))
+        x.append(i)
+        y.append(sx_f)
+    plt.plot(x,y)
+    
+#    print(dd.interaction)
+#    print(dd.flip_condition(5,9,7))
+    
+#    print(dd._Sx(2))
+#    print(dd._Sy(2))
+#    print(dd._Sz(2))
