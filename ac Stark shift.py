@@ -259,11 +259,95 @@ class internal_structure(object):
     def solve_Hamiltonian(self):
         self.eigvals, self.eigvecs = np.linalg.eig(self.Hamiltonian)
         
+    def sort_to_bare_states(self):
+        output_dict = {}
+#        print(self.eigvals)
+        output_dict, val_buffer, vec_buffer = self.bare_state_sort_helper(output_dict, self.eigvals, self.eigvecs)
+        self.bare_state_sort_helper(output_dict, val_buffer, vec_buffer)
+            
+        
+        print(len(output_dict))
+        
+    def bare_state_sort_helper(self, output_dict, _val_buffer, _vec_buffer):
+        if not np.any(_val_buffer):    ### if no item exist in _val_buffer, return
+            return
+        ### else, sort states into output_dict ###
+        res = []
+        for vec in _vec_buffer:
+            vec = np.abs(vec)
+            ### find the largest component not already exist in output_dict
+            temp = max([vec[i] for i in range(len(vec)) if self.index_to_qnum(i) not in output_dict])
+            print([vec[i] for i in range(len(vec)) if self.index_to_qnum(i) not in output_dict])
+            max_index = np.where(vec==temp)
+            res.append(max_index[0][0])
+            
+        print(np.sort(res))        
+        val_buffer = []
+        vec_buffer = []
+        
+        leng = len(res)
+        for i in range(leng):
+            if res.count(res[i]) == 1:
+                output_dict[self.index_to_qnum(res[i])] = _val_buffer[i]
+            else:
+                val_buffer.append(_val_buffer[i])
+                vec_buffer.append(_vec_buffer[i])
+#        print(len(output_dict))
+        return output_dict, val_buffer, vec_buffer
+        
+            
+            
+        
+                
+                
+        
+       
+        
 
-
+        
 
 if __name__ == '__main__':
     
+################# Plot all states with respect to theta #######################
+#    exp = internal_structure()
+#    exp.set_species()
+#    exp.set_B_field()
+#    exp.set_couplings()
+#    exp.set_rotation_quantum_number()
+#    exp.set_hyperfine_quantum_number()
+#    exp.set_Lande_g()
+#    exp.set_ODT_beam()
+#    exp.set_polarizability()
+#    exp.set_qradrupole()
+#    
+#    res = []    
+#
+#
+#    for var in range(91):
+#        exp.set_ODT_beam(13*10**7, var/180*np.pi)          
+#        exp.Initialize_Hamiltonian()
+#        exp.put_IA_J_interaction()
+#        exp.put_IB_J_interaction()
+#        exp.put_IA_IB_interaction()
+#        exp.put_electric_quadrupole_interaction()
+#        exp.put_ac_Stark_shift()
+#        exp.put_Zeeman_shift()
+#        
+#        exp.solve_Hamiltonian()
+#        res.append(np.sort(exp.eigvals))
+#
+#    fig = plt.figure(figsize=(10,10))
+#    theta = np.linspace(0,90,91)
+#    colormap = ['b','g','r','c','m','y','k']
+#    for i in range(48):
+#        x = np.linspace(0,90,91)
+#        data = np.transpose(res)[i]
+#        plt.plot(x,data,label='Frist line',
+#                 linewidth=3,color=colormap[i%7],marker='o',
+#                 markerfacecolor='red',markersize=1)
+#    
+    
+################# Plot all states with respect to theta #######################       
     exp = internal_structure()
     exp.set_species()
     exp.set_B_field()
@@ -273,8 +357,9 @@ if __name__ == '__main__':
     exp.set_Lande_g()
     exp.set_ODT_beam()
     exp.set_polarizability()
-    exp.set_qradrupole()
-    
+    exp.set_qradrupole()    
+
+    exp.set_ODT_beam(13*10**7, 0/180*np.pi)          
     exp.Initialize_Hamiltonian()
     exp.put_IA_J_interaction()
     exp.put_IB_J_interaction()
@@ -282,11 +367,12 @@ if __name__ == '__main__':
     exp.put_electric_quadrupole_interaction()
     exp.put_ac_Stark_shift()
     exp.put_Zeeman_shift()
-    
     exp.solve_Hamiltonian()
-    exp.print_out_attributes()
-    plt.matshow(np.abs(exp.eigvecs))
     
+    exp.sort_to_bare_states()
+    
+
+
 
 
 
