@@ -228,10 +228,7 @@ class internal_structure(object):
         self.Hamiltonian += self.get_ac_Stark_shift()
     
     def index_to_qnum(self, index):
-        N_J = 2*self.J+1
-        N_I_A = 2*self.I_A+1
-        N_I_B = 2*self.I_B+1
-        size = N_J * N_I_A * N_I_B
+        N_J, N_I_A, N_I_B, size = self.get_number_of_states()
         if index >= size or index < 0:
             return None
         else:
@@ -241,8 +238,7 @@ class internal_structure(object):
             return (mJ, mI_A, mI_B)
         
     def qnum_to_index(self, qnum):
-        N_I_A = 2*self.I_A+1
-        N_I_B = 2*self.I_B+1
+        N_J, N_I_A, N_I_B, size = self.get_number_of_states()
         mJ, mI_A, mI_B = qnum
         if -self.J <= mJ <= self.J and -self.I_A <= mI_A <= self.I_A and -self.I_B <= mI_B <= self.I_B:
             return int((mJ+self.J)*(N_I_A*N_I_B) + (mI_A+self.I_A)*(N_I_B) +(mI_B+self.I_B))
@@ -256,59 +252,208 @@ class internal_structure(object):
         size = N_J * N_I_A * N_I_B
         return int(N_J), int(N_I_A), int(N_I_B), int(size)
     
+    def get_all_states_qnum(self):
+        res = []
+        _, _, _, size = self.get_number_of_states()
+        for i in range(size):
+            res.append(self.index_to_qnum(i))
+        return res
+             
     def solve_Hamiltonian(self):
         self.eigvals, self.eigvecs = np.linalg.eig(self.Hamiltonian)
+        self.eigvecs = np.transpose(self.eigvecs)
         
     def sort_to_bare_states(self):
         output_dict = {}
 #        print(self.eigvals)
-        output_dict, val_buffer, vec_buffer = self.bare_state_sort_helper(output_dict, self.eigvals, self.eigvecs)
-        self.bare_state_sort_helper(output_dict, val_buffer, vec_buffer)
+        eigsys = []
+        for i in range(len(self.eigvals)):
+            eigsys.append((self.eigvals[i], self.eigvecs[i]))
+        
+#        print("================================")
+        self.bare_state_sort_helper(output_dict, eigsys)
+        
+        return output_dict
             
         
-        print(len(output_dict))
-        
-    def bare_state_sort_helper(self, output_dict, _val_buffer, _vec_buffer):
-        if not np.any(_val_buffer):    ### if no item exist in _val_buffer, return
-            return
-        ### else, sort states into output_dict ###
+    def bare_state_sort_helper(self, output_dict, eigsys):
+        if not eigsys:    ## if no item exist in _val_buffer, return
+            return 
+        ## else, sort states into output_dict 
         res = []
-        for vec in _vec_buffer:
-            vec = np.abs(vec)
-            ### find the largest component not already exist in output_dict
-            temp = max([vec[i] for i in range(len(vec)) if self.index_to_qnum(i) not in output_dict])
-            print([vec[i] for i in range(len(vec)) if self.index_to_qnum(i) not in output_dict])
-            max_index = np.where(vec==temp)
-            res.append(max_index[0][0])
-            
-        print(np.sort(res))        
-        val_buffer = []
-        vec_buffer = []
+        for eigpair in eigsys:
+            vec = np.abs(eigpair[1])
+            ## find the largest component not already exist in output_dict
+            max_index = self.find_largest_comp_not_in_dict(output_dict, vec)
+            res.append(max_index)
+    
+#        print(sorted(res))
+        eigsys_buffer = []
         
+        ## Sort unique values into output_dict, store the rest in eigsys_buffer
         leng = len(res)
         for i in range(leng):
             if res.count(res[i]) == 1:
-                output_dict[self.index_to_qnum(res[i])] = _val_buffer[i]
+                output_dict[self.index_to_qnum(res[i])] = eigsys[i][0]
             else:
-                val_buffer.append(_val_buffer[i])
-                vec_buffer.append(_vec_buffer[i])
-#        print(len(output_dict))
-        return output_dict, val_buffer, vec_buffer
+                eigsys_buffer.append(eigsys[i])
         
-            
-            
-        
+        ## if buffer is empty, then done.
+        if not eigsys_buffer:
+#            print("*************************")
+            return
                 
-                
+        eigsys_buffer.sort(key=lambda x: self.find_largest_comp_not_in_dict(output_dict, np.abs(x[1])))
+#        print(eigsys_buffer)
+        val_temp = None
+        arg_temp = None
+        pair_temp = None
+        i = 0
+        while i < len(eigsys_buffer):
+            eigpair = eigsys_buffer[i]
+            arg = self.find_largest_comp_not_in_dict(output_dict, np.abs(eigpair[1]))
+            val = np.abs(eigpair[1])[arg]
+            if pair_temp == None:
+                val_temp = val
+                arg_temp = arg
+                pair_temp = eigpair
+            else:
+                if arg == arg_temp:
+                    if val > val_temp:
+                        val_temp = val
+                        pair_temp = eigpair
+                else:
+                    output_dict[self.index_to_qnum(arg_temp)] = pair_temp[0]
+#                    print('put',arg_temp)
+                    eigsys_buffer.remove(pair_temp)
+                    val_temp = val
+                    arg_temp = arg
+                    pair_temp = eigpair
+                    continue
+            i += 1
+            
+        output_dict[self.index_to_qnum(arg_temp)] = pair_temp[0]
+#        print('put', arg_temp)
+        eigsys_buffer.remove(pair_temp)
         
-       
         
-
+        if not eigsys_buffer:
+            return
+        else:
+            self.bare_state_sort_helper(output_dict, eigsys_buffer)
+   
+    def find_largest_comp_not_in_dict(self, output_dict, vec):
+        vec = np.abs(vec)
+        reduced_vec = [vec[i] for i in range(len(vec)) if self.index_to_qnum(i) not in output_dict]
+        temp = np.sort(reduced_vec)[-1]
+        max_index = np.where(vec==temp)
+        return max_index[0][0]
+        
         
 
 if __name__ == '__main__':
     
-################# Plot all states with respect to theta #######################
+################# Plot spectrum with respect to theta #######################
+#    exp = internal_structure()
+#    exp.set_species()
+#    exp.set_B_field()
+#    exp.set_couplings()
+#    exp.set_rotation_quantum_number()
+#    exp.set_hyperfine_quantum_number()
+#    exp.set_Lande_g()
+#    exp.set_ODT_beam(0,0)
+#    exp.set_polarizability()
+#    exp.set_qradrupole()
+#    exp.set_ODT_beam()      
+#    
+##    output_states = [(1,1.5,1.5), (0,1.5,1.5), (-1,1.5,1.5), (1,-1.5,-1.5), (0,-1.5,-1.5), (-1,-0.5, 1.5)]
+#    output_states = exp.get_all_states_qnum()
+#    res = []
+#    
+#    points = 181
+#    
+#    for var in range(points):
+#        exp.set_ODT_beam(13*10**7, var*np.pi/180)       
+#        exp.Initialize_Hamiltonian()
+#        exp.put_IA_J_interaction()
+#        exp.put_IB_J_interaction()
+#        exp.put_IA_IB_interaction()
+#        exp.put_electric_quadrupole_interaction()
+#        exp.put_ac_Stark_shift()
+#        exp.put_Zeeman_shift()
+#        
+#        exp.solve_Hamiltonian()
+#        output_dict = exp.sort_to_bare_states()
+##        print(len(output_dict))
+##        print(output_dict)
+#        res.append([output_dict[state] for state in output_states])
+#        
+#        
+#    fig = plt.figure(figsize=(10,10))
+#    ax = fig.gca()
+#    ax.set_xticks(np.arange(0, points, 10))
+#    ax.set_yticks(np.arange(-10000, 10000, 1000))
+#    colormap = ['b','g','r','c','m','y','k']
+#    for i in range(len(output_states)):
+#        x = np.linspace(0,points-1,points)
+#        data = np.transpose(res)[i]/1000
+#        plt.plot(x,data,label='Frist line',
+#                 linewidth=3,color=colormap[i%7],marker='o',
+#                 markerfacecolor='red',markersize=1)
+#    plt.grid()
+#    plt.show() 
+# 
+    
+################# Plot spectrum with respect to B field #######################
+#    exp = internal_structure()
+#    exp.set_species()
+#    exp.set_B_field()
+#    exp.set_couplings()
+#    exp.set_rotation_quantum_number()
+#    exp.set_hyperfine_quantum_number()
+#    exp.set_Lande_g()
+#    exp.set_ODT_beam(0,0)
+#    exp.set_polarizability()
+#    exp.set_qradrupole()
+#    exp.set_ODT_beam()      
+#    
+#    output_states = exp.get_all_states_qnum()
+##    output_states = [(1,1.5,1.5), (0,1.5,1.5), (-1,1.5,1.5), (1,-1.5,-1.5), (0,-1.5,-1.5), (-1,-1.5,-1.5)]
+#    
+#    res = []
+#    
+#    points = 500
+#    
+#    for var in range(points):
+#        exp.set_B_field(var*0.0001)    
+#        exp.Initialize_Hamiltonian()
+#        exp.put_IA_J_interaction()
+#        exp.put_IB_J_interaction()
+#        exp.put_IA_IB_interaction()
+#        exp.put_electric_quadrupole_interaction()
+#        exp.put_ac_Stark_shift()
+#        exp.put_Zeeman_shift()
+#        
+#        exp.solve_Hamiltonian()
+#        output_dict = exp.sort_to_bare_states()
+#        res.append([output_dict[state] for state in output_states])
+#        
+#        
+#    fig = plt.figure(figsize=(10,10))
+#    ax = fig.gca()
+#    ax.set_xticks(np.arange(0, points, 20))
+#    ax.set_yticks(np.arange(-10000, 10000, 1000))
+#    colormap = ['b','g','r','c','m','y','k']
+#    for i in range(len(output_states)):
+#        x = np.linspace(0,points-1,points)
+#        data = np.transpose(res)[i]/1000
+#        plt.plot(x,data,label='Frist line',
+#                 linewidth=3,color=colormap[i%7],marker='o',
+#                 markerfacecolor='red',markersize=1)
+#    plt.grid()
+#    plt.show()     
+    
+################# Differential ac-Stark shift #######################       
 #    exp = internal_structure()
 #    exp.set_species()
 #    exp.set_B_field()
@@ -319,12 +464,29 @@ if __name__ == '__main__':
 #    exp.set_ODT_beam()
 #    exp.set_polarizability()
 #    exp.set_qradrupole()
+#    exp.set_ODT_beam()      
 #    
-#    res = []    
-#
-#
-#    for var in range(91):
-#        exp.set_ODT_beam(13*10**7, var/180*np.pi)          
+#    exp.set_ODT_beam(0, 0)       
+#    exp.Initialize_Hamiltonian()
+#    exp.put_IA_J_interaction()
+#    exp.put_IB_J_interaction()
+#    exp.put_IA_IB_interaction()
+#    exp.put_electric_quadrupole_interaction()
+#    exp.put_ac_Stark_shift()
+#    exp.put_Zeeman_shift()
+#        
+#    exp.solve_Hamiltonian()
+#    output_dict = exp.sort_to_bare_states()
+#    
+#    output_states = [(1,1.5,1.5), (0,1.5,1.5), (-1,1.5,1.5)]
+#    reference = [output_dict[state] for state in output_states]
+#    
+#    res = []
+#    
+#    points = 91
+#    
+#    for var in range(points):
+#        exp.set_ODT_beam(13*10**7, var*np.pi/180)       
 #        exp.Initialize_Hamiltonian()
 #        exp.put_IA_J_interaction()
 #        exp.put_IB_J_interaction()
@@ -334,45 +496,174 @@ if __name__ == '__main__':
 #        exp.put_Zeeman_shift()
 #        
 #        exp.solve_Hamiltonian()
-#        res.append(np.sort(exp.eigvals))
-#
+#        output_dict = exp.sort_to_bare_states()
+#        res.append([output_dict[state] for state in output_states])
+#        
+#        
 #    fig = plt.figure(figsize=(10,10))
-#    theta = np.linspace(0,90,91)
+#    ax = fig.gca()
+#    ax.set_xticks(np.arange(0, 91, 5))
+#    ax.set_yticks(np.arange(-1000, 1000, 10))
 #    colormap = ['b','g','r','c','m','y','k']
-#    for i in range(48):
-#        x = np.linspace(0,90,91)
-#        data = np.transpose(res)[i]
+#    for i in range(len(output_states)):
+#        x = np.linspace(0,points-1,points)
+#        data = np.transpose(res)[i]/1000 - reference[i]/1000 + exp.alpha_0*13*10**7/1000
 #        plt.plot(x,data,label='Frist line',
 #                 linewidth=3,color=colormap[i%7],marker='o',
 #                 markerfacecolor='red',markersize=1)
+#    plt.grid()
+#    plt.show() 
+
+    
+    
+################## Differential polarizability #######################       
+#    exp = internal_structure()
+#    exp.set_species()
+#    exp.set_B_field()
+#    exp.set_couplings()
+#    exp.set_rotation_quantum_number()
+#    exp.set_hyperfine_quantum_number()
+#    exp.set_Lande_g()
+#    exp.set_ODT_beam(0,0)
+#    exp.set_polarizability()
+#    exp.set_qradrupole()
+#    exp.set_ODT_beam()      
 #    
+#    exp.set_ODT_beam(0, 0)       
+#    exp.Initialize_Hamiltonian()
+#    exp.put_IA_J_interaction()
+#    exp.put_IB_J_interaction()
+#    exp.put_IA_IB_interaction()
+#    exp.put_electric_quadrupole_interaction()
+#    exp.put_ac_Stark_shift()
+#    exp.put_Zeeman_shift()
+#        
+#    exp.solve_Hamiltonian()
+#    output_dict = exp.sort_to_bare_states()
+#    
+#    res1 = []
+#    res2 = []
+#    
+#    points = 91
+#    scale = 1
+#    intensity = 13*10**7
+#    output_states = [(1,1.5,1.5), (0,1.5,1.5), (-1,1.5,1.5)]
+#    
+#    for var in range(points):
+#        exp.set_ODT_beam(intensity, scale*var*np.pi/180)       
+#        exp.Initialize_Hamiltonian()
+#        exp.put_IA_J_interaction()
+#        exp.put_IB_J_interaction()
+#        exp.put_IA_IB_interaction()
+#        exp.put_electric_quadrupole_interaction()
+#        exp.put_ac_Stark_shift()
+#        exp.put_Zeeman_shift()
+#        
+#        exp.solve_Hamiltonian()
+#        output_dict = exp.sort_to_bare_states()
+#        res1.append([output_dict[state] for state in output_states])
+#        
+#    for var in range(points):
+#        exp.set_ODT_beam(intensity-10**5, scale*var*np.pi/180)       
+#        exp.Initialize_Hamiltonian()
+#        exp.put_IA_J_interaction()
+#        exp.put_IB_J_interaction()
+#        exp.put_IA_IB_interaction()
+#        exp.put_electric_quadrupole_interaction()
+#        exp.put_ac_Stark_shift()
+#        exp.put_Zeeman_shift()
+#        
+#        exp.solve_Hamiltonian()
+#        output_dict = exp.sort_to_bare_states()
+#        res2.append([output_dict[state] for state in output_states])
+#        
+#        
+#    fig = plt.figure(figsize=(10,10))
+#    ax = fig.gca()
+#    ax.set_xticks(np.arange(0, points*scale, 5))
+#    ax.set_yticks(np.arange(-0.0008, 0.0006,0.0001))
+#    colormap = ['b','g','r','c','m','y','k']
+#    for i in range(len(output_states)):
+#        x = np.linspace(0,points*scale-2,points)
+#        data = (np.transpose(res1)[i]-np.transpose(res2)[i])/10**5+exp.alpha_0
+#        plt.plot(x,data,label='Frist line',
+#                 linewidth=3,color=colormap[i%7],marker='o',
+#                 markerfacecolor='red',markersize=1)
+#    plt.grid()
+#    plt.show()    
+
     
-################# Plot all states with respect to theta #######################       
-    exp = internal_structure()
-    exp.set_species()
-    exp.set_B_field()
-    exp.set_couplings()
-    exp.set_rotation_quantum_number()
-    exp.set_hyperfine_quantum_number()
-    exp.set_Lande_g()
-    exp.set_ODT_beam()
-    exp.set_polarizability()
-    exp.set_qradrupole()    
-
-    exp.set_ODT_beam(13*10**7, 0/180*np.pi)          
-    exp.Initialize_Hamiltonian()
-    exp.put_IA_J_interaction()
-    exp.put_IB_J_interaction()
-    exp.put_IA_IB_interaction()
-    exp.put_electric_quadrupole_interaction()
-    exp.put_ac_Stark_shift()
-    exp.put_Zeeman_shift()
-    exp.solve_Hamiltonian()
+################# Plot spectrum with coupling strength (Not finished) #######################
+#    exp = internal_structure()
+#    exp.set_species()
+#    exp.set_B_field()
+#    exp.set_couplings()
+#    exp.set_rotation_quantum_number()
+#    exp.set_hyperfine_quantum_number()
+#    exp.set_Lande_g()
+#    exp.set_ODT_beam(0,0)
+#    exp.set_polarizability()
+#    exp.set_qradrupole()
+#    exp.set_ODT_beam()      
+#    
+#    output_states = exp.get_all_states_qnum()
+##    output_states = [(1,1.5,1.5), (0,1.5,1.5), (-1,1.5,1.5), (1,-1.5,-1.5), (0,-1.5,-1.5), (-1,-1.5,-1.5)]
+#    
+#    res = []
+#    
+#    points = 500
+#    
+#    for var in range(points):
+#        exp.set_B_field(var*0.0001)    
+#        exp.Initialize_Hamiltonian()
+#        exp.put_IA_J_interaction()
+#        exp.put_IB_J_interaction()
+#        exp.put_IA_IB_interaction()
+#        exp.put_electric_quadrupole_interaction()
+#        exp.put_ac_Stark_shift()
+#        exp.put_Zeeman_shift()
+#        
+#        exp.solve_Hamiltonian()
+#        output_dict = exp.sort_to_bare_states()
+#        res.append([output_dict[state] for state in output_states])
+#        
+#        
+#    fig = plt.figure(figsize=(10,10))
+#    ax = fig.gca()
+#    ax.set_xticks(np.arange(0, points, 20))
+#    ax.set_yticks(np.arange(-10000, 10000, 1000))
+#    colormap = ['b','g','r','c','m','y','k']
+#    for i in range(len(output_states)):
+#        x = np.linspace(0,points-1,points)
+#        data = np.transpose(res)[i]/1000
+#        plt.plot(x,data,label='Frist line',
+#                 linewidth=3,color=colormap[i%7],marker='o',
+#                 markerfacecolor='red',markersize=1)
+#    plt.grid()
+#    plt.show() 
     
-    exp.sort_to_bare_states()
-    
 
-
-
-
+################# Check each term in hamiltonian #######################  
+#    exp = internal_structure()
+#    exp.set_species()
+#    exp.set_B_field()
+#    exp.set_couplings()
+#    exp.set_rotation_quantum_number()
+#    exp.set_hyperfine_quantum_number()
+#    exp.set_Lande_g()
+#    exp.set_ODT_beam()
+#    exp.set_polarizability()
+#    exp.set_qradrupole()
+#    exp.set_ODT_beam(13*10**7, 0/180*np.pi)      
+#    exp.set_B_field((var+380)*0.0001)        
+#    exp.Initialize_Hamiltonian()
+##    exp.put_IA_J_interaction()
+#    
+##    exp.put_IB_J_interaction()
+##    exp.put_IA_IB_interaction()
+#    exp.put_electric_quadrupole_interaction()
+##    exp.put_ac_Stark_shift()
+##    exp.put_Zeeman_shift()
+#        
+#    print(exp.Hamiltonian)
 
